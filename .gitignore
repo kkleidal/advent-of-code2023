@@ -1,1 +1,3 @@
 input.txt
+.*.sw*
+.DS_Store
