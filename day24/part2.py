@@ -34,18 +34,35 @@ def sgn(x):
 def dovetail(start, minn, maxx):
     max_dev = 1
     seen = True
+    all_seen = set()
     while seen:
         seen = False
-        for d1 in range(-max_dev, max_dev+1):
-            for d2 in range(-max_dev, max_dev+1):
-                if d1 == 0 and d2 == 0:
-                    continue
-                d1 += start
-                d2 += start
-                if d1 < minn or d1 > maxx or d2 < minn or d2 > maxx:
-                    continue
-                yield d1, d2
-                seen = True
+        for d1, d2 in sorted(itertools.chain(
+            zip(
+                range(max(minn, start-max_dev), min(maxx, start+max_dev)+1),
+                itertools.repeat(max_dev),
+            ),
+            zip(
+                range(max(minn, start-max_dev), min(maxx, start+max_dev)+1),
+                itertools.repeat(-max_dev),
+            ),
+            zip(
+                itertools.repeat(max_dev),
+                range(max(minn, start-max_dev)+1, min(maxx, start+max_dev)),
+            ),
+            zip(
+                itertools.repeat(-max_dev),
+                range(max(minn, start-max_dev)+1, min(maxx, start+max_dev)),
+            ),
+        ), key=lambda x: sum(map(abs,x))):
+            if d1 < minn or d1 > maxx or d2 < minn or d2 > maxx:
+                continue
+            assert (d1, d2) not in all_seen
+            yield (d1, d2)
+            all_seen.add((d1, d2))
+            seen = True
+        if not seen:
+            break
         max_dev += 1
     
 def is_integral(x):
@@ -97,7 +114,7 @@ def pairs():
 
 def main():
     # search = [(-3, 1)]
-    s = 100
+    s = 600
     search = dovetail(0, -s, s)
     for rvx, rvy in tqdm.tqdm(search, total=(s*2+1)**2): # dovetail(50, -100, 100):
         # if any(rvx == v[0] for _, v in hailstones) or any(rvy == v[1] for _, v in hailstones):
