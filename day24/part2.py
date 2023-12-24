@@ -6,6 +6,7 @@ import numpy as np
 import itertools
 import tqdm
 from functools import partial
+import multiprocessing
 
 def to_frac(x):
     return Fraction(int(x), 1)
@@ -112,105 +113,112 @@ def pairs():
 # assert will_collide_at(hailstones[-1], thrown) == 1 
 # assert will_collide_at(hailstones[-2], thrown) == 6 
 
+def find(velos):
+    rvx, rvy = velos
+    for (dim_permutation, reverse_permu), (i, j) in itertools.product(
+            list(permutations()),
+            list(pairs())[:3],
+    ):
+        permute = partial(apply_permutation, permutation=dim_permutation)
+        unpermute = partial(apply_permutation, permutation=reverse_permu)
+        
+        hs1 = tuple(map(permute, hailstones[i]))
+        hs2 = tuple(map(permute, hailstones[j]))
+        ((x1, y1, z1), (vx1, vy1, vz1)) = hs1
+        ((x2, y2, z2), (vx2, vy2, vz2)) = hs2
+
+        c1x1 = rvx - vx1
+        c1y1 = rvy - vy1
+        c1x2 = rvx - vx2
+        c1y2 = rvy - vy2
+        if c1x1 == 0 or c1x2 == 0:
+            debug("0 slope: not implemented")
+            continue
+        c21 = c1y1 / c1x1
+        c22 = c1y2 / c1x2
+        if c22 == c21:
+            debug("Parallel: not implemented")
+            continue
+        rpx = (y2 - y1 + c21 * x1 - c22 * x2) / (c21 - c22) #(y1 - y2 - c21 * x1 + c22 * x2) / (c22 - c21)
+        rpy = y1 - (x1 - rpx) * c21
+
+        # if not is_integral(rpx) and not is_integral(rpy):
+        #     debug("Non-integral start position")
+        #     continue
+        
+        # c11 = rvx - vx1
+        # c12 = rvx - vx2
+        # c21 = rvy - vy1
+        # c22 = rvy - vy2
+        # rpx = ((x1 * c21) / c11 - y1 - (x2 * c22) / c12 + y2) / (c21/c11 - c22/c12)
+        # if not is_integral(rpx):
+        #     continue
+        # rpy = (1 / c11 * rpx - x1 / c11) * c21 + y1
+
+        t1 = (x1 - rpx) / (rvx - vx1)
+        if rvy != vy1:
+            t1_2 = (y1 - rpy) / (rvy - vy1)
+            assert t1 == t1_2
+
+        t2 = (x2 - rpx) / (rvx - vx2)
+        
+        # Next: compute z positions of collision for the two hailstones at the two different collision times
+        # From this we can derive the z velocity, and then the z position at time 0
+        # check if the z position is integral
+        z_coll_1 = get_pos(hs1, t1)[2]
+        z_coll_2 = get_pos(hs2, t2)[2]
+        if t1 == t2 and z_coll_1 != z_coll_2:
+            p = get_pos(((x2, y2), (vx2, vy2)), t2)
+            assert get_pos(((x1, y1), (vx1, vy1)), t1) == p
+            debug(f"Collision in 2 axes, but not in third, {p}, {z_coll_1} vs {z_coll_2}")
+            continue
+        rvz = (z_coll_1 - z_coll_2) / (t1 - t2)
+        rpz = z_coll_1 - rvz * t1
+        if not is_integral(rpz):
+            debug("Non-integral start position, z")
+            continue
+
+        thrown = (
+            tuple(unpermute((rpx, rpy, rpz))),
+            tuple(unpermute((rvx, rvy, rvz))),
+        )
+
+        if t1 < 0 or t2 < 0:
+            debug("Negative time")
+            continue
+
+        # For debugging:
+        # print(expected_thrown)
+        # print(thrown)
+        # assert expected_thrown == thrown
+        # blahh
+
+        assert get_pos(hailstones[i], t1) == get_pos(thrown, t1)
+        assert get_pos(hailstones[j], t2) == get_pos(thrown, t2)
+
+        # Then, for each hailstone, compute the time of collision given the known initial position
+        # and velocity and see if they're positive and integral. If the are, that's the solution
+        # print(rvx, rvy, rpx, rpy, t1, t2)
+        if all(will_collide_at(hailstone, thrown) is not None for hailstone in hailstones):
+            # print(thrown)
+            # print(sum(thrown[0]))
+            return thrown
+        else:
+            break
+    return None
+
 def main():
     # search = [(-3, 1)]
     s = 600
     search = dovetail(0, -s, s)
-    for rvx, rvy in tqdm.tqdm(search, total=(s*2+1)**2): # dovetail(50, -100, 100):
-        # if any(rvx == v[0] for _, v in hailstones) or any(rvy == v[1] for _, v in hailstones):
-        #     debug("Not implemented: when velocities equal in a dimension; may need to implement later")
-        #     continue
-
-        for (dim_permutation, reverse_permu), (i, j) in itertools.product(
-                list(permutations()),
-                list(pairs())[:3],
-        ):
-            permute = partial(apply_permutation, permutation=dim_permutation)
-            unpermute = partial(apply_permutation, permutation=reverse_permu)
-            
-            hs1 = tuple(map(permute, hailstones[i]))
-            hs2 = tuple(map(permute, hailstones[j]))
-            ((x1, y1, z1), (vx1, vy1, vz1)) = hs1
-            ((x2, y2, z2), (vx2, vy2, vz2)) = hs2
-
-            c1x1 = rvx - vx1
-            c1y1 = rvy - vy1
-            c1x2 = rvx - vx2
-            c1y2 = rvy - vy2
-            if c1x1 == 0 or c1x2 == 0:
-                debug("0 slope: not implemented")
-                continue
-            c21 = c1y1 / c1x1
-            c22 = c1y2 / c1x2
-            if c22 == c21:
-                debug("Parallel: not implemented")
-                continue
-            rpx = (y2 - y1 + c21 * x1 - c22 * x2) / (c21 - c22) #(y1 - y2 - c21 * x1 + c22 * x2) / (c22 - c21)
-            rpy = y1 - (x1 - rpx) * c21
-
-            # if not is_integral(rpx) and not is_integral(rpy):
-            #     debug("Non-integral start position")
-            #     continue
-            
-            # c11 = rvx - vx1
-            # c12 = rvx - vx2
-            # c21 = rvy - vy1
-            # c22 = rvy - vy2
-            # rpx = ((x1 * c21) / c11 - y1 - (x2 * c22) / c12 + y2) / (c21/c11 - c22/c12)
-            # if not is_integral(rpx):
-            #     continue
-            # rpy = (1 / c11 * rpx - x1 / c11) * c21 + y1
-
-            t1 = (x1 - rpx) / (rvx - vx1)
-            if rvy != vy1:
-                t1_2 = (y1 - rpy) / (rvy - vy1)
-                assert t1 == t1_2
-
-            t2 = (x2 - rpx) / (rvx - vx2)
-            
-            # Next: compute z positions of collision for the two hailstones at the two different collision times
-            # From this we can derive the z velocity, and then the z position at time 0
-            # check if the z position is integral
-            z_coll_1 = get_pos(hs1, t1)[2]
-            z_coll_2 = get_pos(hs2, t2)[2]
-            if t1 == t2 and z_coll_1 != z_coll_2:
-                p = get_pos(((x2, y2), (vx2, vy2)), t2)
-                assert get_pos(((x1, y1), (vx1, vy1)), t1) == p
-                debug(f"Collision in 2 axes, but not in third, {p}, {z_coll_1} vs {z_coll_2}")
-                continue
-            rvz = (z_coll_1 - z_coll_2) / (t1 - t2)
-            rpz = z_coll_1 - rvz * t1
-            if not is_integral(rpz):
-                debug("Non-integral start position, z")
-                continue
-
-            thrown = (
-                tuple(unpermute((rpx, rpy, rpz))),
-                tuple(unpermute((rvx, rvy, rvz))),
-            )
-
-            if t1 < 0 or t2 < 0:
-                debug("Negative time")
-                continue
-
-            # For debugging:
-            # print(expected_thrown)
-            # print(thrown)
-            # assert expected_thrown == thrown
-            # blahh
-
-            assert get_pos(hailstones[i], t1) == get_pos(thrown, t1)
-            assert get_pos(hailstones[j], t2) == get_pos(thrown, t2)
-
-            # Then, for each hailstone, compute the time of collision given the known initial position
-            # and velocity and see if they're positive and integral. If the are, that's the solution
-            # print(rvx, rvy, rpx, rpy, t1, t2)
-            if all(will_collide_at(hailstone, thrown) is not None for hailstone in hailstones):
+    with multiprocessing.Pool(8) as pool:
+        for res in tqdm.tqdm(pool.imap(find, search, chunksize=1024), total=(s*2+1)**2):
+            if res is not None:
+                thrown = res
                 print(thrown)
                 print(sum(thrown[0]))
-                return
-            else:
-                break
+                return thrown
+
     
 DEBUG = False
 
@@ -220,4 +228,5 @@ def debug(*args):
 
 # logging.basicConfig()
 # logging.getLogger().setLevel(logging.WARNING) #logging.DEBUG)
-main()
+if __name__ == "__main__":
+    main()
