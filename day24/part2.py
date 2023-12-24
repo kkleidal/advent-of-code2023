@@ -7,6 +7,7 @@ import itertools
 import tqdm
 from functools import partial
 import multiprocessing
+from contextlib import nullcontext
 
 def to_frac(x):
     return Fraction(int(x), 1)
@@ -25,11 +26,6 @@ def sgn(x):
         return 0
     else:
         return -1
-
-# 
-# def fmt(hs):
-#     x, v = hs
-#     return '%d, %d, %d @ %d, %d, %d' % (*x, *v)
 
 
 def dovetail(start, minn, maxx):
@@ -66,31 +62,33 @@ def dovetail(start, minn, maxx):
             break
         max_dev += 1
     
+
 def is_integral(x):
     if isinstance(x, Fraction):
         return x.denominator == 1
     return abs(round(float(x)) - x) < 1e-7
 
+
 def get_pos(hailstone, t):
     x, v = hailstone
     return tuple(x0 + t * vv for x0, vv in zip(x, v))
 
+
 def will_collide_at(hailstone, rock):
-    # cross_2d(hailstone, rock)
-    (x1, _, _), (vx1, _, _) = hailstone
-    (x2, _, _), (vx2, _, _) = rock
-    if vx2 == vx1:
-        return None
-    t = (x1 - x2) / (vx2 - vx1)
-    if t < 0:
+    t = None
+    for d in range(3):
+        x1, vx1 = [v[d] for v in hailstone]
+        x2, vx2 = [v[d] for v in rock]
+        if vx2 == vx1:
+            continue
+        t = (x1 - x2) / (vx2 - vx1)
+    if t is None:
         return None
     if get_pos(hailstone, t) != get_pos(rock, t):
         # Doesn't collide in y or z
         return None
     return t
 
-# Answer: ((24, 13, 10), (-3, 1, 2))
-# test_area = (7, 27)
 
 def permutations():
     yield [0, 1, 2], [0, 1, 2]
@@ -100,24 +98,53 @@ def permutations():
     yield [2, 0, 1], np.argsort([2, 0, 1]).tolist()
     yield [0, 2, 1], np.argsort([0, 2, 1]).tolist()
 
+
 def apply_permutation(x, permutation):
     return [x[i] for i in permutation]
+
 
 def pairs():
     for i in range(len(hailstones)):
         for j in range(1, len(hailstones)):
             yield (i, j)
 
-# expected_thrown = ((24, 13, 10), (-3, 1, 2))
-# thrown = expected_thrown
-# assert will_collide_at(hailstones[-1], thrown) == 1 
-# assert will_collide_at(hailstones[-2], thrown) == 6 
+
+def cross_2d(h1, h2):
+    x1, v1 = h1
+    x2, v2 = h2
+    if v1[1] == 0 or v2[1] == 0:
+        # Horizontal
+        raise NotImplementedError
+    m1 = v1[0] / v1[1]
+    b1 = x1[0] - x1[1] * m1
+    m2 = v2[0] / v2[1]
+    b2 = x2[0] - x2[1] * m2
+    if m1 == m2:
+        return None  # Parallel
+    x = (b2 - b1) / (m1 - m2)
+    y = m1 * x + b1
+    if sgn(x - x1[1]) != sgn(v1[1]):
+        return None  # Wrong side of ray
+    if sgn(x - x2[1]) != sgn(v2[1]):
+        return None  # Wrong side of ray
+    return (y, x)
+
+
+crossing_pairs = []
+for pair in pairs():
+    if cross_2d(hailstones[pair[0]], hailstones[pair[1]]):
+        crossing_pairs.append(pair)
+        if len(crossing_pairs) >= 3:
+            break
+
 
 def find(velos):
     rvx, rvy = velos
+
+    one_passed = False
     for (dim_permutation, reverse_permu), (i, j) in itertools.product(
             list(permutations()),
-            list(pairs())[:3],
+            crossing_pairs,
     ):
         permute = partial(apply_permutation, permutation=dim_permutation)
         unpermute = partial(apply_permutation, permutation=reverse_permu)
@@ -132,36 +159,21 @@ def find(velos):
         c1x2 = rvx - vx2
         c1y2 = rvy - vy2
         if c1x1 == 0 or c1x2 == 0:
-            debug("0 slope: not implemented")
             continue
         c21 = c1y1 / c1x1
         c22 = c1y2 / c1x2
         if c22 == c21:
-            debug("Parallel: not implemented")
             continue
-        rpx = (y2 - y1 + c21 * x1 - c22 * x2) / (c21 - c22) #(y1 - y2 - c21 * x1 + c22 * x2) / (c22 - c21)
+        rpx = (y2 - y1 + c21 * x1 - c22 * x2) / (c21 - c22)
         rpy = y1 - (x1 - rpx) * c21
-
-        # if not is_integral(rpx) and not is_integral(rpy):
-        #     debug("Non-integral start position")
-        #     continue
-        
-        # c11 = rvx - vx1
-        # c12 = rvx - vx2
-        # c21 = rvy - vy1
-        # c22 = rvy - vy2
-        # rpx = ((x1 * c21) / c11 - y1 - (x2 * c22) / c12 + y2) / (c21/c11 - c22/c12)
-        # if not is_integral(rpx):
-        #     continue
-        # rpy = (1 / c11 * rpx - x1 / c11) * c21 + y1
+        one_passed = True
 
         t1 = (x1 - rpx) / (rvx - vx1)
         if rvy != vy1:
             t1_2 = (y1 - rpy) / (rvy - vy1)
             assert t1 == t1_2
 
-        t2 = (x2 - rpx) / (rvx - vx2)
-        
+        t2 = (x2 - rpx) / (rvx - vx2) 
         # Next: compute z positions of collision for the two hailstones at the two different collision times
         # From this we can derive the z velocity, and then the z position at time 0
         # check if the z position is integral
@@ -170,12 +182,10 @@ def find(velos):
         if t1 == t2 and z_coll_1 != z_coll_2:
             p = get_pos(((x2, y2), (vx2, vy2)), t2)
             assert get_pos(((x1, y1), (vx1, vy1)), t1) == p
-            debug(f"Collision in 2 axes, but not in third, {p}, {z_coll_1} vs {z_coll_2}")
             continue
         rvz = (z_coll_1 - z_coll_2) / (t1 - t2)
         rpz = z_coll_1 - rvz * t1
         if not is_integral(rpz):
-            debug("Non-integral start position, z")
             continue
 
         thrown = (
@@ -183,50 +193,36 @@ def find(velos):
             tuple(unpermute((rvx, rvy, rvz))),
         )
 
-        if t1 < 0 or t2 < 0:
-            debug("Negative time")
-            continue
-
-        # For debugging:
-        # print(expected_thrown)
-        # print(thrown)
-        # assert expected_thrown == thrown
-        # blahh
-
         assert get_pos(hailstones[i], t1) == get_pos(thrown, t1)
         assert get_pos(hailstones[j], t2) == get_pos(thrown, t2)
 
         # Then, for each hailstone, compute the time of collision given the known initial position
         # and velocity and see if they're positive and integral. If the are, that's the solution
         # print(rvx, rvy, rpx, rpy, t1, t2)
-        if all(will_collide_at(hailstone, thrown) is not None for hailstone in hailstones):
-            # print(thrown)
-            # print(sum(thrown[0]))
+        times = [will_collide_at(hailstone, thrown) for hailstone in hailstones]
+        if all(time is not None for time in times):
+            if any(time < 0 for time in times):
+                raise NotImplementedError("Negative time")
+                continue
+
             return thrown
         else:
             break
+    assert one_passed
     return None
 
-def main():
-    # search = [(-3, 1)]
+def main(mp=False):
     s = 600
     search = dovetail(0, -s, s)
-    with multiprocessing.Pool(8) as pool:
-        for res in tqdm.tqdm(pool.imap(find, search, chunksize=1024), total=(s*2+1)**2):
-            if res is not None:
-                thrown = res
-                print(thrown)
-                print(sum(thrown[0]))
-                return thrown
+    for res in tqdm.tqdm(map(find, search), total=(s*2+1)**2):
+        if res is not None:
+            thrown = res
+            print(thrown)
+            print(sum(thrown[0]))
+            return thrown
 
-    
-DEBUG = False
 
-def debug(*args):
-    if DEBUG:
-        print(*args)
-
-# logging.basicConfig()
-# logging.getLogger().setLevel(logging.WARNING) #logging.DEBUG)
 if __name__ == "__main__":
     main()
+
+# 1007148211789625
