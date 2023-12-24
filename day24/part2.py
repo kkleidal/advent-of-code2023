@@ -123,7 +123,7 @@ def main():
 
         for (dim_permutation, reverse_permu), (i, j) in itertools.product(
                 list(permutations()),
-                list(pairs()),
+                list(pairs())[:3],
         ):
             permute = partial(apply_permutation, permutation=dim_permutation)
             unpermute = partial(apply_permutation, permutation=reverse_permu)
